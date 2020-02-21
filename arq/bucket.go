@@ -24,8 +24,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	log "github.com/sirupsen/logrus"
 	"io/ioutil"
-	log "github.com/Sirupsen/logrus"
 	"path"
 
 	"github.com/mattn/go-plist"
@@ -58,7 +58,7 @@ func (ab *ArqBucket) parsePlist() error {
 		log.Debugf("Failed during ArqBucket (%s) NewArqBucket: %s", ab, err)
 		return err
 	}
-	bucket_decrypted, err := ab.ArqBackupSet.BucketDecrypter.Decrypt(bucket_encrypted)
+	bucket_decrypted, err := ab.ArqBackupSet.Decrypter.Decrypt(bucket_encrypted)
 	if err != nil {
 		err2 := errors.New(fmt.Sprintf("Failed to decrypt bucket: %s", err))
 		log.Debugf("%s", err2)

@@ -23,11 +23,13 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	log "github.com/Sirupsen/logrus"
 	"github.com/asimihsan/arqinator/arq/types"
+	"github.com/pierrec/lz4"
+	log "github.com/sirupsen/logrus"
 	"io"
 	"io/ioutil"
 	"os"
@@ -38,11 +40,12 @@ import (
 var (
 	ErrorCouldNotRecoverTree = errors.New("Couldn't find a tree in the Arq backup")
 )
+
 /*
 If we're running on Windows then convert a path to a Windows version of it.
 e.g. on Windows /C/Users/username becomes C:\Users\username
 however on e.g. Mac /C/Users/username returns /C/Users/username
- */
+*/
 func maybeConvertToWindowsPath(path string) string {
 	newPath := filepath.FromSlash(path)
 	if newPath == path {
@@ -54,8 +57,8 @@ func maybeConvertToWindowsPath(path string) string {
 }
 
 /**
-	This function is not responsible for closing the file handle you pass in.
- */
+This function is not responsible for closing the file handle you pass in.
+*/
 func getWriterForFile(destinationPath string, mode os.FileMode, size int64) (*os.File, *bufio.Writer, error) {
 	destinationPath = maybeConvertToWindowsPath(destinationPath)
 	f, err := os.OpenFile(destinationPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, mode)
@@ -101,16 +104,16 @@ func DownloadTree(tree *arq_types.Tree, cacheDirectory string, backupSet *ArqBac
 	// if tree is null we failed to find this part of the directory structure in Arq. Either we didn't back it up
 	// or something really wrong happened whilst trying to recover it. Warn loudly but don't stop the backup,
 	// because there may still be other files we can recover!
-	if (tree == nil) {
+	if tree == nil {
 		log.Warnf("DownloadTree: couldn't find sourcePath %s in backup, hence cannot recover it. Will continue recovering other files.", sourcePath)
 		return ErrorCouldNotRecoverTree
 	}
 
 	directoryToCreate := maybeConvertToWindowsPath(destinationPath)
-	if err := os.Mkdir(directoryToCreate, tree.Mode); err != nil {
+	if err := os.Mkdir(directoryToCreate, os.FileMode(tree.Mode)); err != nil {
 		log.Errorf("DownloadTree failed during MkdirAll %s: %s", directoryToCreate, err)
 	}
-	if tree.Mode == os.FileMode(int(0)) {
+	if tree.Mode == 0 {
 		log.Debugf("tree %s isn't readable or writeable by anyone, fix up", tree)
 		if err := os.Chmod(directoryToCreate, os.FileMode(int(0775))); err != nil {
 			log.Errorf("Failed to set permissions of tree %s: %s", tree, err)
@@ -212,7 +215,7 @@ func GetDataBlobKeyContentsFromObjects(SHA1 [20]byte, bucket *ArqBucket) ([]byte
 		return nil, err
 	}
 
-	decrypted, err := backupSet.BlobDecrypter.Decrypt(encrypted)
+	decrypted, err := backupSet.Decrypter.Decrypt(encrypted)
 	if err != nil {
 		log.Debugf("downloadDataFromDataBlobKey failed to decrypt: %s", err)
 		return nil, err
@@ -220,9 +223,19 @@ func GetDataBlobKeyContentsFromObjects(SHA1 [20]byte, bucket *ArqBucket) ([]byte
 	// Try to decompress, if fails then assume it was uncompressed to begin with
 	var b bytes.Buffer
 	r, err := gzip.NewReader(bytes.NewBuffer(decrypted))
+
 	if err != nil {
-		log.Debugf("downloadDataFromDataBlobKey decompression failed during NewReader, assume not compresed: ", err)
-		return nil, err
+		b := bytes.NewBuffer(decrypted)
+		var orig_size uint32
+		binary.Read(b, binary.BigEndian, &orig_size)
+
+		out := make([]byte, orig_size)
+		n, err := lz4.UncompressBlock(decrypted[4:], out)
+		if err != nil {
+			log.Debugf("GetPackFile decompression failed, assume not compresed: ", err)
+			return decrypted, nil
+		}
+		return out[:n], nil
 	}
 	if _, err = io.Copy(&b, r); err != nil {
 		log.Debugf("downloadDataFromDataBlobKey decompression failed during io.Copy, assume not compresed: ", err)

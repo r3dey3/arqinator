@@ -25,14 +25,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 )
 
 type String struct {
 	Data []byte
 }
 
-func NewString (s string) *String {
+func NewString(s string) *String {
 	return &String{Data: []byte(s)}
 }
 
@@ -52,12 +52,12 @@ func (s *String) Equal(o string) bool {
 }
 
 func ReadString(p *bytes.Buffer) (*String, error) {
-	isNull, err := p.ReadByte()
+	isNotNull, err := p.ReadByte()
 	if err != nil {
 		log.Debugf("ReadString failed to read byte: %s", err)
 		return nil, err
 	}
-	if isNull == 1 {
+	if isNotNull == 1 {
 		var length uint64
 		err = binary.Read(p, binary.BigEndian, &length)
 		if err != nil {
@@ -82,6 +82,10 @@ func ReadStringAsSHA1(p *bytes.Buffer) (*[20]byte, error) {
 	}
 	if data1 == nil {
 		return nil, nil
+	}
+	if len(data1.Data) != 40 {
+		err = errors.New("Invalid length of sha string")
+		return nil, err
 	}
 	data2, err := hex.DecodeString(string(data1.Data))
 	if err != nil {

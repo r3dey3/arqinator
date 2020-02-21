@@ -25,7 +25,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -36,9 +36,9 @@ const (
 func (b BlobKey) String() string {
 	if b.Header.Type == BLOB_TYPE_COMMIT {
 		return fmt.Sprintf("{BlobKey: Header=%s, SHA1=%s, "+
-			"IsEncryptionKeyStretched=%s, IsCompressed=%s}",
+			"IsEncryptionKeyStretched=%s, CompType=%s}",
 			b.Header, hex.EncodeToString(b.SHA1[:]), b.IsEncryptionKeyStretched,
-			b.IsCompressed)
+			b.CompressionType)
 	} else {
 		return fmt.Sprintf("{BlobKey: Header=%s, SHA1=%s, "+
 			"IsEncryptionKeyStretched=%s, StorageType=%d, ArchiveId=%s, "+
@@ -58,7 +58,7 @@ type BlobKey struct {
 
 	// only present for Commit v8 or later
 	// only for a Tree BlobKey, not for ParentCommit BlobKey
-	IsCompressed *Boolean
+	CompressionType *CompressionType
 
 	// only for tree v17 or later
 	StorageType         uint32
@@ -86,13 +86,15 @@ func ReadBlobKey(p *bytes.Buffer, h *Header, readIsCompressed bool) (blobKey *Bl
 		}
 	}
 	if h.Type == BLOB_TYPE_COMMIT && h.Version >= 8 && readIsCompressed {
-		if blobKey.IsCompressed, err2 = ReadBoolean(p); err2 != nil {
+		blobKey.CompressionType, err2 = ReadCompressionType(p, h.Version >= 10)
+		if err2 != nil {
 			err = errors.New(fmt.Sprintf("ReadBlobKey failed during IsCompressed parsing: %s", err2))
 			return
 		}
 	}
 	if h.Type == BLOB_TYPE_TREE && h.Version >= 17 {
 		binary.Read(p, binary.BigEndian, &blobKey.StorageType)
+
 		if blobKey.ArchiveId, err = ReadString(p); err != nil {
 			log.Debugf("ReadBlobKey failed to read ArchiveId %s", err)
 			return

@@ -21,14 +21,16 @@ package connector
 
 import (
 	"fmt"
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/urfave/cli"
 	"strings"
 )
 
@@ -44,15 +46,35 @@ func (c S3Connection) String() string {
 		c.BucketName, c.CacheDirectory)
 }
 
-func NewS3Connection(connection *s3.S3, cacheDirectory string, s3BucketName string,
-	options *s3manager.DownloadOptions) S3Connection {
+func NewS3Connection(c *cli.Context) (Connection, error) {
+	//region := c.GlobalString("s3-region")
+	s3BucketName := c.GlobalString("s3-bucket-name")
+	cacheDirectory := c.GlobalString("cache-directory")
+	//newSession := session.New(s3Config)
+	s3Config := &aws.Config{
+		//Credentials:      credentials.NewStaticCredentials("YOUR-ACCESSKEYID", "YOUR-SECRETACCESSKEY", ""),
+		//Endpoint:         aws.String("http://localhost:9000"),
+		Region: aws.String(c.GlobalString("s3-region")),
+		//S3ForcePathStyle: aws.Bool(true),
+	}
+	if len(c.GlobalString("s3-endpoint")) != 0 {
+		s3Config.Endpoint = aws.String(c.GlobalString("s3-endpoint"))
+		if !strings.HasPrefix(c.GlobalString("s3-endpoint"), "https") {
+			s3Config.DisableSSL = aws.Bool(true)
+		}
+		s3Config.S3ForcePathStyle = aws.Bool(true)
+	}
+	newSession := session.New(s3Config)
+
+	svc := s3.New(newSession)
+
 	conn := S3Connection{
-		Connection:     connection,
+		Connection:     svc,
 		BucketName:     s3BucketName,
 		CacheDirectory: cacheDirectory,
 	}
-	conn.Downloader = s3manager.NewDownloader(options)
-	return conn
+	conn.Downloader = s3manager.NewDownloaderWithClient(svc)
+	return conn, nil
 }
 
 func (c S3Connection) GetCacheDirectory() string {
@@ -76,11 +98,13 @@ func (s3Obj S3Object) GetPath() string {
 }
 
 func (conn S3Connection) ListObjectsAsFolders(prefix string) ([]Object, error) {
-	return conn.listObjects(prefix, "/")
+	ret, err := conn.listObjects(prefix, "/")
+	log.Debug(ret)
+	return ret, err
 }
 
 func (conn S3Connection) ListObjectsAsAll(prefix string) ([]Object, error) {
-	return conn.listObjects(prefix, ",")
+	return conn.listObjects(prefix, "")
 }
 
 func (conn S3Connection) listObjects(prefix string, delimiter string) ([]Object, error) {
@@ -96,9 +120,10 @@ func (conn S3Connection) listObjects(prefix string, delimiter string) ([]Object,
 		if moreResults {
 			input.Marker = nextMarker
 		}
+		log.Debug(input)
 		result, err := conn.Connection.ListObjects(&input)
 		if err != nil {
-			log.Debugln("Failed to ListObjects for bucket %s, prefix %s: %s", conn.BucketName, prefix, err)
+			log.Debugf("Failed to ListObjects for bucket %s, prefix %s: %s", conn.BucketName, prefix, err)
 			return nil, err
 		}
 		if delimiter == "/" { // folders

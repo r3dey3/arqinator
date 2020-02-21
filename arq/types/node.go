@@ -24,8 +24,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	log "github.com/Sirupsen/logrus"
 	"github.com/dustin/go-humanize"
+	log "github.com/sirupsen/logrus"
 	"os"
 	"text/tabwriter"
 	"time"
@@ -36,9 +36,9 @@ type Node struct {
 	TreeVersion              int
 	IsTree                   *Boolean
 	TreeContainsMissingItems *Boolean
-	DataAreCompressed        *Boolean
-	XattrsAreCompressed      *Boolean
-	AclIsCompressed          *Boolean
+	DataCompressionType      *CompressionType
+	XattrsCompressionType    *CompressionType
+	AclCompressionType       *CompressionType
 	DataBlobKeys             []*BlobKey
 	UncompressedDataSize     uint64
 	ThumbnailBlobKey         *BlobKey
@@ -71,8 +71,8 @@ type Node struct {
 
 func (n Node) String() string {
 	return fmt.Sprintf("{Node: Name=%s, TreeVersion=%d, IsTree=%s, "+
-		"TreeContainsMissingItems=%s, DataAreCompressed=%s, "+
-		"XattrsAreCompressed=%s, AclIsCompressed=%s, len(DataBlobKeys)=%d, "+
+		"TreeContainsMissingItems=%s, DataCompressionType=%s, "+
+		"XattrsCompressionType=%s, AclCompressionType=%s, len(DataBlobKeys)=%d, "+
 		"UncompressedDataSize=%d, XattrsBlobKey=%s, XattrsSize=%d, "+
 		"AclBlobKey=%s, Uid=%d, Gid=%d, Mode=%s, MtimeSec=%d, MtimeNsec=%d, "+
 		"Flags=%d, FinderFlags=%d, ExtendedFinderFlags=%d, FinderFileType=%s, "+
@@ -80,7 +80,7 @@ func (n Node) String() string {
 		"StNlink=%d, StRdev=%d, CtimeSec=%d, CtimeNsec=%d, CreateTimeSec=%d, "+
 		"CreateTimeNsec=%d, StBlocks=%d, StBlkSize=%d}",
 		n.Name, n.TreeVersion, n.IsTree, n.TreeContainsMissingItems,
-		n.DataAreCompressed, n.XattrsAreCompressed, n.AclIsCompressed,
+		n.DataCompressionType, n.XattrsCompressionType, n.AclCompressionType,
 		len(n.DataBlobKeys), n.UncompressedDataSize, n.XattrsBlobKey,
 		n.XattrsSize, n.AclBlobKey, n.Uid, n.Gid, n.Mode, n.MtimeSec,
 		n.MtimeNsec, n.Flags, n.FinderFlags, n.ExtendedFinderFlags,
@@ -107,12 +107,16 @@ func (n *Node) PrintOutput() {
 func ReadNodes(p *bytes.Buffer, treeHeader *Header) (nodes []*Node, err error) {
 	var i, numNodes uint32
 	binary.Read(p, binary.BigEndian, &numNodes)
+	if numNodes > 10000 {
+		return nil, errors.New("Too many nodes")
+	}
 	nodes = make([]*Node, numNodes)
+	log.Debugf("Attempting to read %d nodes", numNodes)
 	for i = 0; i < numNodes; i++ {
 		var node *Node
 		node, err = ReadNode(p, treeHeader)
 		if err != nil {
-			log.Debugf("ReadNode failed to read missing node: %s", err)
+			log.Debugf("ReadNode failed to read node: %s", err)
 			return
 		}
 		nodes[i] = node
@@ -127,36 +131,41 @@ func ReadNode(p *bytes.Buffer, treeHeader *Header) (node *Node, err error) {
 		err = errors.New(fmt.Sprintf("ReadNode failed during Name parsing: %s", err2))
 		return
 	}
+
 	if node.IsTree, err2 = ReadBoolean(p); err2 != nil {
 		err = errors.New(fmt.Sprintf("ReadNode failed during IsTree parsing: %s", err2))
 		return
 	}
+
 	if node.TreeVersion >= 18 {
 		if node.TreeContainsMissingItems, err2 = ReadBoolean(p); err2 != nil {
 			err = errors.New(fmt.Sprintf("ReadNode failed during TreeContainsMissingItems parsing: %s", err2))
 			return
 		}
 	}
+
 	if node.TreeVersion >= 12 {
-		if node.DataAreCompressed, err2 = ReadBoolean(p); err2 != nil {
+		new_type := node.TreeVersion >= 19
+		if node.DataCompressionType, err2 = ReadCompressionType(p, new_type); err2 != nil {
 			err = errors.New(fmt.Sprintf("ReadNode failed during DataAreCompressed parsing: %s", err2))
 			return
 		}
-		if node.XattrsAreCompressed, err2 = ReadBoolean(p); err2 != nil {
+		if node.XattrsCompressionType, err2 = ReadCompressionType(p, new_type); err2 != nil {
 			err = errors.New(fmt.Sprintf("ReadNode failed during XattrsAreCompressed parsing: %s", err2))
 			return
 		}
-		if node.AclIsCompressed, err2 = ReadBoolean(p); err2 != nil {
+		if node.AclCompressionType, err2 = ReadCompressionType(p, new_type); err2 != nil {
 			err = errors.New(fmt.Sprintf("ReadNode failed during AclIsCompressed parsing: %s", err2))
 			return
 		}
 	}
+	log.Debug(node)
 	var i, numDataBlobKeys uint32
 	binary.Read(p, binary.BigEndian, &numDataBlobKeys)
 	node.DataBlobKeys = make([]*BlobKey, numDataBlobKeys)
 	for i = 0; i < numDataBlobKeys; i++ {
 		var dataBlobKey *BlobKey
-		dataBlobKey, err = ReadBlobKey(p, treeHeader, node.DataAreCompressed.IsTrue())
+		dataBlobKey, err = ReadBlobKey(p, treeHeader, node.DataCompressionType.Type == 1)
 		if err != nil {
 			log.Debugf("ReadNode failed to read dataBlobKey: %s", err)
 			return

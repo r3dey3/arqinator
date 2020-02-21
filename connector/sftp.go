@@ -27,8 +27,8 @@ References:
 package connector
 
 import (
-	"fmt"
 	"bufio"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net"
@@ -37,14 +37,14 @@ import (
 	"strings"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/pkg/sftp"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
 
 const (
-	TIMEOUT    time.Duration = time.Duration(10 * time.Second)
+	TIMEOUT            time.Duration = time.Duration(10 * time.Second)
 	KEEPALIVE_INTERVAL time.Duration = time.Duration(3 * time.Second)
 )
 
@@ -251,7 +251,7 @@ func (conn SFTPConnection) Get(key string) (string, error) {
 	defer wBuffered.Flush()
 	remoteFullpath := conn.SFTPClient.Join(conn.RemotePath, key)
 	r, err := conn.SFTPClient.Open(remoteFullpath)
-	if err != nil{
+	if err != nil {
 		log.Errorf("Failed to open remote file %s: %s", remoteFullpath, err)
 		return cacheFilepath, err
 	}

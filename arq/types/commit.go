@@ -24,9 +24,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	log "github.com/Sirupsen/logrus"
-	"regexp"
+	log "github.com/sirupsen/logrus"
 	"net/url"
+	"regexp"
 )
 
 const (
@@ -45,10 +45,10 @@ type Commit struct {
 	ParentCommits []*BlobKey
 	TreeBlobKey   *BlobKey
 
-	Location      *String
+	Location *String
 	// These fields aren't part of the file, but are derived fields of Location
 	Computer string
-	Path string
+	Path     string
 
 	// only present for Commit v7 or older, never used
 	MergeCommonAncestorSHA1 *String
@@ -114,12 +114,14 @@ func ReadCommit(p *bytes.Buffer) (commit *Commit, err error) {
 		log.Debugf("ReadCommit failed to read TreeBlobKey %s", err)
 		return
 	}
+	log.Debugf("TREE BLOB KEY = %s", commit.TreeBlobKey)
 
 	if commit.Location, err2 = ReadString(p); err2 != nil {
 		err = errors.New(fmt.Sprintf("ReadCommit failed during Location parsing: %s", err2))
 		log.Debugf("%s", err)
 		return
 	}
+	//log.Debug(commit.Location)
 	unescapedLocation, err := url.QueryUnescape(commit.Location.ToString())
 	if err == nil {
 		log.Debugf("Successfully URL unescaped location %s, use it instead.", commit.Location)

@@ -25,95 +25,133 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/sha1"
+	"crypto/sha256"
+	"errors"
 	"golang.org/x/crypto/pbkdf2"
 	"hash"
-	log "github.com/Sirupsen/logrus"
-	"errors"
+	//log "github.com/sirupsen/logrus"
+)
+
+const (
+	AES_KEY_LEN_BYTES = 32
+	HMAC_LEN          = 32
+	IV_LEN            = 16
 )
 
 type CryptoState struct {
-	c  cipher.Block
-	iv []byte
+	c        cipher.Block
+	hmac     hash.Hash
+	sha_salt []byte
 }
 
-func NewCryptoState(password []byte, salt []byte) (*CryptoState, error) {
+func AesCBCDecrypt(src []byte, iv []byte, c cipher.Block) ([]byte, error) {
+	decryptor := cipher.NewCBCDecrypter(c, iv)
+	dst := make([]byte, len(src))
+	decryptor.CryptBlocks(dst, src)
+	pad := dst[len(dst)-1]
+	if pad > 16 {
+		return nil, errors.New("Incorrect padding")
+	}
+	for i := 1; i <= int(pad); i++ {
+		if dst[len(dst)-i] != pad {
+			return nil, errors.New("Incorrect padding")
+		}
+	}
+	dst = dst[:len(dst)-int(pad)]
+
+	return dst, nil
+}
+func NewCryptoState(password []byte, encDatFile []byte) (*CryptoState, error) {
 	const (
-		PBKDF2_ITERATIONS = 1000
-		AES_KEY_LEN_BYTES = 32
-		AES_IV_LEN_BYTES  = 16
+		PBKDF2_ITERATIONS = 200000
+		HEADER_LEN        = 12
+		SALT_LEN          = 8
+		MASTER_KEY_SIZE   = 32
 	)
-	var err error
-	state := CryptoState{}
-	key1 := pbkdf2.Key(password, salt, PBKDF2_ITERATIONS,
-		AES_KEY_LEN_BYTES+AES_IV_LEN_BYTES, sha1.New)
-	var key2 []byte
-	key2, state.iv = bytesToKey(sha1.New, salt, key1, PBKDF2_ITERATIONS,
-		AES_KEY_LEN_BYTES, AES_IV_LEN_BYTES)
-	if state.c, err = aes.NewCipher(key2); err != nil {
-		log.Debugln("Failed to create aes cipher object in crypto NewState",
-			err)
+	offset := 0
+	header := encDatFile[offset : offset+HEADER_LEN]
+	offset += HEADER_LEN
+
+	salt := encDatFile[offset : offset+SALT_LEN]
+	offset += SALT_LEN
+
+	key_hmac := encDatFile[offset : offset+HMAC_LEN]
+	offset += HMAC_LEN
+
+	iv := encDatFile[offset : offset+IV_LEN]
+	offset += IV_LEN
+
+	enc_master_keys := encDatFile[offset:]
+
+	if string(header) != "ENCRYPTIONV2" {
+		return nil, errors.New("Unexpected header in encryptionv3.dat")
+	}
+
+	user_key := pbkdf2.Key(password, salt, PBKDF2_ITERATIONS,
+		AES_KEY_LEN_BYTES*2, sha1.New)
+
+	// Validate the password
+	h := hmac.New(sha256.New, user_key[32:])
+	h.Write(iv)
+	h.Write(enc_master_keys)
+	if !bytes.Equal(key_hmac, h.Sum(nil)) {
+		return nil, errors.New("Incorrect password")
+	}
+
+	c, err := aes.NewCipher(user_key[:32])
+	if err != nil {
 		return nil, err
 	}
+
+	master_keys, err := AesCBCDecrypt(enc_master_keys, iv, c)
+	if err != nil {
+		return nil, errors.New("Error decrypting master keys")
+	}
+
+	state := CryptoState{}
+
+	if state.c, err = aes.NewCipher(master_keys[:MASTER_KEY_SIZE]); err != nil {
+		return nil, err
+	}
+	state.hmac = hmac.New(sha256.New, master_keys[MASTER_KEY_SIZE:MASTER_KEY_SIZE*2])
+	state.sha_salt = make([]byte, MASTER_KEY_SIZE)
+	copy(state.sha_salt, master_keys[MASTER_KEY_SIZE*2:MASTER_KEY_SIZE*3])
 	return &state, nil
 }
 
 func (s *CryptoState) Decrypt(data []byte) ([]byte, error) {
 	data = bytes.TrimPrefix(data, []byte("encrypted"))
-	dec := cipher.NewCBCDecrypter(s.c, s.iv)
-	if len(data)%aes.BlockSize != 0 {
-		err := errors.New("Decrypt data length not multiple of AES block size")
+	data = bytes.TrimPrefix(data, []byte("ARQO"))
+	hmac := data[:HMAC_LEN]
+	data = data[HMAC_LEN:]
+
+	master_iv := data[:IV_LEN]
+	data = data[IV_LEN:]
+
+	enc_data_iv_key := data[:IV_LEN*2+AES_KEY_LEN_BYTES]
+	data = data[IV_LEN*2+AES_KEY_LEN_BYTES:]
+
+	s.hmac.Reset()
+	s.hmac.Write(master_iv)
+	s.hmac.Write(enc_data_iv_key)
+	s.hmac.Write(data)
+	if !bytes.Equal(hmac, s.hmac.Sum(nil)) {
+		return nil, errors.New("Failed hmac check in decrypt")
+	}
+
+	data_iv_key, err := AesCBCDecrypt(enc_data_iv_key, master_iv, s.c)
+	if err != nil {
 		return nil, err
 	}
-	if len(data) == 0 {
-		err := errors.New("Decrypt data length is zero, not expected")
+	data_iv := data_iv_key[:IV_LEN]
+	data_key := data_iv_key[IV_LEN:]
+
+	c, err := aes.NewCipher(data_key)
+	if err != nil {
 		return nil, err
 	}
-	dec.CryptBlocks(data, data)
-	//log.Debugf("% x\n", data)
-	//log.Debugf("%s\n", data)
 
-	// unpad
-	{
-		n := len(data)
-		p := int(data[n-1])
-		if p == 0 || p > aes.BlockSize {
-			err := errors.New("Decrypt impossible padding, bad password?")
-			return nil, err
-		}
-		for i := 0; i < p; i++ {
-			if data[n-1-i] != byte(p) {
-				err := errors.New("Decrypt bad padding, bad password?")
-				return nil, err
-			}
-		}
-		data = data[:n-p]
-	}
-	return data, nil
-}
-
-func bytesToKey(hf func() hash.Hash, salt, data []byte, iter int, keySize,
-	ivSize int) (key, iv []byte) {
-	h := hf()
-	var d, dcat []byte
-	sum := make([]byte, 0, h.Size())
-	for len(dcat) < keySize+ivSize {
-		// D_i = HASH^count(D_(i-1) || data || salt)
-		h.Reset()
-		h.Write(d)
-		h.Write(data)
-		h.Write(salt)
-		sum = h.Sum(sum[:0])
-
-		for j := 1; j < iter; j++ {
-			h.Reset()
-			h.Write(sum)
-			sum = h.Sum(sum[:0])
-		}
-
-		d = append(d[:0], sum...)
-		dcat = append(dcat, d...)
-	}
-
-	return dcat[:keySize], dcat[keySize : keySize+ivSize]
+	return AesCBCDecrypt(data, data_iv, c)
 }

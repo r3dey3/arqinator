@@ -21,7 +21,7 @@ package arq
 
 import (
 	"fmt"
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	"io/ioutil"
 	"os"
 	"regexp"
@@ -39,12 +39,11 @@ var (
 )
 
 type ArqBackupSet struct {
-	Connection      connector.Connection
-	UUID            string
-	ComputerInfo    *ArqComputerInfo
-	Buckets         []*ArqBucket
-	BlobDecrypter   *crypto.CryptoState
-	BucketDecrypter *crypto.CryptoState
+	Connection   connector.Connection
+	UUID         string
+	ComputerInfo *ArqComputerInfo
+	Buckets      []*ArqBucket
+	Decrypter    *crypto.CryptoState
 }
 
 func GetArqBackupSets(connection connector.Connection, password []byte) ([]*ArqBackupSet, error) {
@@ -73,27 +72,22 @@ func GetArqBackupSets(connection connector.Connection, password []byte) ([]*ArqB
 func NewArqBackupSet(connection connector.Connection, password []byte, uuid string) (*ArqBackupSet, error) {
 	var err error
 	abs := ArqBackupSet{
-		Connection:   connection,
-		UUID:         uuid,
+		Connection: connection,
+		UUID:       uuid,
 	}
 
 	// Regular objects (commits, trees, blobs) use a random "salt" stored in backup
-	var salt []byte
-	if salt, err = abs.getSalt(); err != nil {
+	var encDatFile []byte
+	if encDatFile, err = abs.getEncDatFile(); err != nil {
 		log.Debugln("Failed during NewArqBackupSet getSalt: ", err)
 		return nil, err
 	}
-	if abs.BlobDecrypter, err = crypto.NewCryptoState(password, salt); err != nil {
-		log.Debugln("Failed during NewArqBackupSet NewCryptoState for BlobDecrypter: ", err)
+	if abs.Decrypter, err = crypto.NewCryptoState(password, encDatFile); err != nil {
+		log.Debugln("Failed during NewArqBackupSet NewCryptoState for Decrypter: ", err)
 		return nil, err
 	}
 
 	// Arq Buckets (the folders) use a fixed salt. See arq_restore/Bucket.m.
-	if abs.BucketDecrypter, err = crypto.NewCryptoState(password, []byte("BucketPL")); err != nil {
-		log.Debugln("Failed during NewArqBackupSet NewCryptoState for BucketDecrypter: ", err)
-		return nil, err
-	}
-
 	if abs.ComputerInfo, err = abs.getComputerInfo(); err != nil {
 		log.Debugln("Failed during NewArqBackupSet getComputerInfo: ", err)
 		return nil, err
@@ -121,19 +115,19 @@ func (aci ArqComputerInfo) String() string {
 	return fmt.Sprintf("{ArqComputerInfo: UserName=%s, ComputerName=%s}", aci.UserName, aci.ComputerName)
 }
 
-func (abs *ArqBackupSet) getSalt() ([]byte, error) {
-	key := abs.UUID + "/salt"
+func (abs *ArqBackupSet) getEncDatFile() ([]byte, error) {
+	key := abs.UUID + "/encryptionv3.dat"
 	filepath, err := abs.Connection.CachedGet(key)
 	if err != nil {
 		log.Debugln("Failed to get salt", err)
 		return nil, err
 	}
-	salt, err := ioutil.ReadFile(filepath)
+	datfile, err := ioutil.ReadFile(filepath)
 	if err != nil {
 		log.Debugln("Failed to read salt from file: ", err)
 		return nil, err
 	}
-	return salt, err
+	return datfile, err
 }
 
 func (abs *ArqBackupSet) getComputerInfo() (*ArqComputerInfo, error) {

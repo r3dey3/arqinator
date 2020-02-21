@@ -22,7 +22,7 @@ package arq_types
 import (
 	"bytes"
 	"fmt"
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 )
 
 type Boolean struct {

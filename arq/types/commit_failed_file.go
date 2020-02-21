@@ -23,7 +23,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 )
 
 // Only present for Commit v3 or later

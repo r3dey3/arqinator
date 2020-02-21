@@ -22,19 +22,14 @@ package main
 import (
 	"os"
 
-	log "github.com/Sirupsen/logrus"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/defaults"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
-	"github.com/codegangsta/cli"
 	"github.com/mitchellh/go-homedir"
+	log "github.com/sirupsen/logrus"
+	"github.com/urfave/cli"
 
 	"errors"
 	"fmt"
 	"github.com/asimihsan/arqinator/arq"
 	"github.com/asimihsan/arqinator/connector"
-	"runtime"
 )
 
 const (
@@ -68,35 +63,6 @@ func cliSetup(c *cli.Context) error {
 		log.Debugf("Deleted cache directory %s.", cacheDirectory)
 	}
 	return nil
-}
-
-func awsSetup(c *cli.Context) (connector.Connection, error) {
-	region := c.GlobalString("s3-region")
-	s3BucketName := c.GlobalString("s3-bucket-name")
-	cacheDirectory := c.GlobalString("cache-directory")
-
-	defaults.DefaultConfig.Region = aws.String(region)
-	svc := s3.New(nil)
-	log.Debugln("Setting concurrency of S3 downloader to: ", runtime.GOMAXPROCS(0))
-	opts := &s3manager.DownloadOptions{
-		S3:          svc,
-		Concurrency: runtime.GOMAXPROCS(0),
-	}
-	s3Connection := connector.NewS3Connection(svc, cacheDirectory, s3BucketName, opts)
-	return s3Connection, nil
-}
-
-func googleCloudStorageSetup(c *cli.Context) (connector.Connection, error) {
-	jsonPrivateKeyFilepath := c.GlobalString("gcs-json-private-key-filepath")
-	projectID := c.GlobalString("gcs-project-id")
-	bucketName := c.GlobalString("gcs-bucket-name")
-	cacheDirectory := c.GlobalString("cache-directory")
-
-	connection, err := connector.NewGoogleCloudStorageConnection(jsonPrivateKeyFilepath, projectID, bucketName, cacheDirectory)
-	if err != nil {
-		return connection, err
-	}
-	return connection, nil
 }
 
 func sftpSetup(c *cli.Context) (connector.Connection, error) {
@@ -137,10 +103,8 @@ func getConnection(c *cli.Context) (connector.Connection, error) {
 		err        error
 	)
 	switch c.GlobalString("backup-type") {
-	case "googlecloudstorage":
-		connection, err = googleCloudStorageSetup(c)
 	case "s3":
-		connection, err = awsSetup(c)
+		connection, err = connector.NewS3Connection(c)
 	case "sftp":
 		connection, err = sftpSetup(c)
 	}
@@ -330,6 +294,10 @@ func main() {
 		cli.StringFlag{
 			Name:  "s3-bucket-name",
 			Usage: "AWS S3 bucket name, e.g. 'arq-akiaabdefg-us-west-2'.",
+		},
+		cli.StringFlag{
+			Name:  "s3-endpoint",
+			Usage: "AWS S3 endpoint if not amazon, e.g. 'https://www.example.com/s3'.",
 		},
 		cli.StringFlag{
 			Name:  "gcs-json-private-key-filepath",

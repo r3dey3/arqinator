@@ -22,19 +22,19 @@ package connector
 import (
 	"bufio"
 	"fmt"
-	"io"
-	"io/ioutil"
+	//"io"
+	//"io/ioutil"
 	"os"
 	"path/filepath"
-	"strings"
-	"time"
+	//"strings"
+	//"time"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
-	"google.golang.org/cloud"
-	"google.golang.org/cloud/storage"
+	//"golang.org/x/oauth2"
+	//"golang.org/x/oauth2/google"
+	//cloud "cloud.google.com/go"
+	//"cloud.google.com/go/storage"
 )
 
 type GoogleCloudStorageConnection struct {
@@ -57,16 +57,19 @@ func (c GoogleCloudStorageConnection) Close() error {
 }
 
 func getContext(jsonPrivateKeyFilepath string, projectID string) (context.Context, error) {
-	jsonKey, err := ioutil.ReadFile(jsonPrivateKeyFilepath)
-	if err != nil {
-		return nil, err
-	}
-	conf, err := google.JWTConfigFromJSON(jsonKey, storage.ScopeFullControl)
-	if err != nil {
-		return nil, err
-	}
-	ctx := cloud.NewContext(projectID, conf.Client(oauth2.NoContext))
-	return ctx, nil
+	return nil, nil
+	/*
+		jsonKey, err := ioutil.ReadFile(jsonPrivateKeyFilepath)
+		if err != nil {
+			return nil, err
+		}
+		conf, err := google.JWTConfigFromJSON(jsonKey, storage.ScopeFullControl)
+		if err != nil {
+			return nil, err
+		}
+		ctx := cloud.NewContext(projectID, conf.Client(oauth2.NoContext))
+		return ctx, nil
+	*/
 }
 
 func NewGoogleCloudStorageConnection(jsonPrivateKeyFilepath string, projectID string, bucketName string,
@@ -104,41 +107,44 @@ func (conn GoogleCloudStorageConnection) ListObjectsAsAll(prefix string) ([]Obje
 }
 
 func (conn GoogleCloudStorageConnection) listObjects(prefix string, delimiter string) ([]Object, error) {
-	log.Debugf("GoogleCloudStorageConnection listObjects. prefix: %s, delimeter: %s", prefix, delimiter)
-	objects := make([]Object, 0)
-	query := &storage.Query{
-		Prefix:    prefix,
-		Delimiter: delimiter,
-	}
-	for {
-		gcsObjects, err := storage.ListObjects(conn.Context, conn.BucketName, query)
-		if err != nil {
-			return objects, err
+	return nil, nil
+	/*
+		log.Debugf("GoogleCloudStorageConnection listObjects. prefix: %s, delimeter: %s", prefix, delimiter)
+		objects := make([]Object, 0)
+		query := &storage.Query{
+			Prefix:    prefix,
+			Delimiter: delimiter,
 		}
-		if delimiter == "/" { // folders
-			for _, prefix := range gcsObjects.Prefixes {
-				name := strings.TrimSuffix(prefix, delimiter)
-				object := GoogleCloudStorageObject{
-					Name: name,
-				}
-				objects = append(objects, object)
+		for {
+			gcsObjects, err := storage.ListObjects(conn.Context, conn.BucketName, query)
+			if err != nil {
+				return objects, err
 			}
-		} else { // regular files
-			for _, gcsObject := range gcsObjects.Results {
-				object := GoogleCloudStorageObject{
-					Name: gcsObject.Name,
+			if delimiter == "/" { // folders
+				for _, prefix := range gcsObjects.Prefixes {
+					name := strings.TrimSuffix(prefix, delimiter)
+					object := GoogleCloudStorageObject{
+						Name: name,
+					}
+					objects = append(objects, object)
 				}
-				objects = append(objects, object)
+			} else { // regular files
+				for _, gcsObject := range gcsObjects.Results {
+					object := GoogleCloudStorageObject{
+						Name: gcsObject.Name,
+					}
+					objects = append(objects, object)
+				}
+			}
+			time.Sleep(100 * time.Millisecond)
+			query = gcsObjects.Next
+			if query == nil {
+				break
 			}
 		}
-		time.Sleep(100 * time.Millisecond)
-		query = gcsObjects.Next
-		if query == nil {
-			break
-		}
-	}
-	log.Debugf("GoogleCloudStorageConnection listObjects returns: %s", objects)
-	return objects, nil
+		log.Debugf("GoogleCloudStorageConnection listObjects returns: %s", objects)
+		return objects, nil
+	*/
 }
 
 func (conn GoogleCloudStorageConnection) getCacheFilepath(key string) (string, error) {
@@ -197,19 +203,22 @@ func (conn GoogleCloudStorageConnection) Get(name string) (string, error) {
 	defer w.Close()
 	wBuffered := bufio.NewWriter(w)
 	defer wBuffered.Flush()
-	r, err := storage.NewReader(conn.Context, conn.BucketName, name)
-	if err != nil {
-		log.Errorf("Failed to download name %s during initialization: %s", name, err)
-		defer os.Remove(cacheFilepath)
-		return cacheFilepath, err
-	}
-	defer r.Close()
-	_, err = io.Copy(wBuffered, r)
-	time.Sleep(100 * time.Millisecond)
-	if err != nil {
-		log.Errorf("Failed to download name %s during download: %s", name, err)
-		defer os.Remove(cacheFilepath)
-		return cacheFilepath, err
-	}
 	return cacheFilepath, nil
+	/*
+		r, err := storage.NewReader(conn.Context, conn.BucketName, name)
+		if err != nil {
+			log.Errorf("Failed to download name %s during initialization: %s", name, err)
+			defer os.Remove(cacheFilepath)
+			return cacheFilepath, err
+		}
+		defer r.Close()
+		_, err = io.Copy(wBuffered, r)
+		time.Sleep(100 * time.Millisecond)
+		if err != nil {
+			log.Errorf("Failed to download name %s during download: %s", name, err)
+			defer os.Remove(cacheFilepath)
+			return cacheFilepath, err
+		}
+		return cacheFilepath, nil
+	*/
 }

@@ -24,7 +24,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	"io"
 	"os"
 	"path"
@@ -34,6 +34,7 @@ import (
 	"compress/gzip"
 	"encoding/hex"
 	"github.com/asimihsan/arqinator/arq/types"
+	"github.com/pierrec/lz4"
 	"io/ioutil"
 	"strings"
 )
@@ -158,9 +159,9 @@ func (apsi *ArqPackSetIndex) GetPackFileAsTree(backupSet *ArqBackupSet, bucket *
 }
 
 type PackIndex struct {
-	_      uint32
-	_      uint32
-	Fanout [256]uint32
+	Magic   uint32
+	Version uint32
+	Fanout  [256]uint32
 }
 
 type PackIndexObject struct {
@@ -247,7 +248,7 @@ func testEq(a [20]byte, b [20]byte) bool {
 /*
 Split e.g. /foo/bar/meow.txt into (/foo/bar/meow, .txt)
 or e.g meow.txt into (meow, .txt)
- */
+*/
 func splitExt(path string) (root, ext string) {
 	ext = filepath.Ext(path)
 	root = path[:len(path)-len(ext)]
@@ -264,6 +265,7 @@ func (apsi *ArqPackSetIndex) GetTreePackFile(abs *ArqBackupSet, ab *ArqBucket, t
 	var packIndexObjectResult *PackIndexObject
 	var indexResult string
 	for _, index := range indexes {
+		log.Debug(index)
 		indexContents, err := ioutil.ReadFile(index)
 		if err != nil {
 			log.Panicln(fmt.Sprintf("Could not read index file %s into memory. err: %s", index, err))
@@ -271,6 +273,7 @@ func (apsi *ArqPackSetIndex) GetTreePackFile(abs *ArqBackupSet, ab *ArqBucket, t
 		p := bytes.NewBuffer(indexContents)
 		var header PackIndex
 		binary.Read(p, binary.BigEndian, &header)
+
 		numberLessThanPrefix := int(header.Fanout[targetSHA1[0]-1])
 		numberEqualAndLessThenPrefix := int(header.Fanout[targetSHA1[0]])
 		var pio PackIndexObject
@@ -302,24 +305,31 @@ func (apsi *ArqPackSetIndex) GetTreePackFile(abs *ArqBackupSet, ab *ArqBucket, t
 		return nil, err
 	}
 
-	decrypted, err := abs.BlobDecrypter.Decrypt(pfo.Data.Data)
+	decrypted, err := abs.Decrypter.Decrypt(pfo.Data.Data)
 	if err != nil {
 		log.Debugf("GetPackFile failed to decrypt: %s", err)
 		return nil, err
 	}
 	// Try to decompress, if fails then assume it was uncompressed to begin with
 	var b bytes.Buffer
-	r, err := gzip.NewReader(bytes.NewBuffer(decrypted))
+	var r io.Reader
+	r, err = gzip.NewReader(bytes.NewBuffer(decrypted))
 	if err != nil {
-		log.Debugf("GetPackFile decompression failed during NewReader, assume not compresed: ", err)
-		return decrypted, nil
+		b := bytes.NewBuffer(decrypted)
+		var orig_size uint32
+		binary.Read(b, binary.BigEndian, &orig_size)
+
+		out := make([]byte, orig_size)
+		n, err := lz4.UncompressBlock(decrypted[4:], out)
+		if err != nil {
+			log.Debugf("GetPackFile decompression failed, assume not compresed: ", err)
+			return decrypted, nil
+		}
+		return out[:n], nil
 	}
 	if _, err = io.Copy(&b, r); err != nil {
 		log.Debugf("GetPackFile decompression failed during io.Copy, assume not compresed: ", err)
-		return decrypted, nil
-	}
-	if err := r.Close(); err != nil {
-		log.Debugf("GetPackFile decompression failed during reader Close, assume not compresed: ", err)
+		log.Debug(b)
 		return decrypted, nil
 	}
 	return b.Bytes(), nil
@@ -369,7 +379,7 @@ func (apsi *ArqPackSetIndex) GetBlobPackFile(abs *ArqBackupSet, ab *ArqBucket, t
 		log.Debugf("GetBlobPackFile failed to GetObjectFromBlobPackFile: %s", err)
 		return nil, err
 	}
-	decrypted, err := abs.BlobDecrypter.Decrypt(pfo.Data.Data)
+	decrypted, err := abs.Decrypter.Decrypt(pfo.Data.Data)
 	if err != nil {
 		log.Debugf("GetBlobPackFile failed to decrypt: %s", err)
 		return nil, err
@@ -378,8 +388,17 @@ func (apsi *ArqPackSetIndex) GetBlobPackFile(abs *ArqBackupSet, ab *ArqBucket, t
 	var b bytes.Buffer
 	r, err := gzip.NewReader(bytes.NewBuffer(decrypted))
 	if err != nil {
-		log.Debugf("GetBlobPackFile decompression failed during NewReader, assume not compresed: ", err)
-		return decrypted, nil
+		b := bytes.NewBuffer(decrypted)
+		var orig_size uint32
+		binary.Read(b, binary.BigEndian, &orig_size)
+
+		out := make([]byte, orig_size)
+		n, err := lz4.UncompressBlock(decrypted[4:], out)
+		if err != nil {
+			log.Debugf("GetPackFile decompression failed, assume not compresed: ", err)
+			return decrypted, nil
+		}
+		return out[:n], nil
 	}
 	if _, err = io.Copy(&b, r); err != nil {
 		log.Debugf("GetBlobPackFile decompression failed during io.Copy, assume not compresed: ", err)
@@ -460,7 +479,7 @@ func GetObjectFromPackFile(key string, abs *ArqBackupSet, ab *ArqBucket, pio *Pa
 		log.Debugf("GetObjectFromPackFile failed first time to get key %s: %s", key, err)
 	}
 	isValid, err := IsValidPackFile(packFilepath)
-	if (!isValid) {
+	if !isValid {
 		log.Debugf("GetObjectFromPackFile invalid pack file %s first time, will retry. err: %s", packFilepath, err)
 		if err := os.Remove(packFilepath); err != nil {
 			log.Debugf("GetObjectFromPackFile failed to delete pack file %s after detecting corruption. err: ", packFilepath, err)
@@ -471,7 +490,7 @@ func GetObjectFromPackFile(key string, abs *ArqBackupSet, ab *ArqBucket, pio *Pa
 			log.Debugf("GetObjectFromPackFile failed second time to get key %s: %s", key, err)
 		}
 		isValid, err := IsValidPackFile(packFilepath)
-		if (!isValid) {
+		if !isValid {
 			log.Debugf("GetObjectFromPackFile invalid pack file %s second time, will not retry. err: %s", packFilepath, err)
 			return nil, err
 		}

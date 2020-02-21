@@ -24,27 +24,26 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	log "github.com/Sirupsen/logrus"
 	"github.com/dustin/go-humanize"
-	"os"
+	log "github.com/sirupsen/logrus"
+	//"os"
 	"time"
 )
 
 type Tree struct {
 	Header *Header
 
-	// Only present for Tree v12 or later
-	XattrsAreCompressed *Boolean
-
-	// Only present for Tree v12 or later
-	AclIsCompressed *Boolean
+	XattrsCompressionType *CompressionType
+	AclCompressionType    *CompressionType
+	XattrsAreCompressed   *Boolean
+	AclIsCompressed       *Boolean
 
 	XattrsBlobKey       *BlobKey
 	XattrsSize          uint64
 	AclBlobKey          *BlobKey
 	Uid                 int32
 	Gid                 int32
-	Mode                os.FileMode
+	Mode                int32
 	MtimeSec            int64
 	MtimeNsec           int64
 	Flags               int64
@@ -75,14 +74,14 @@ type Tree struct {
 }
 
 func (c Tree) String() string {
-	return fmt.Sprintf("{Tree: Header=%s, XattrsAreCompressed=%s, "+
-		"AclIsCompressed=%s, XattrsBlobKey=%s, XattrsSize=%d, "+
+	return fmt.Sprintf("{Tree: Header=%s, XattrsCompressionType=%s, "+
+		"AclCompressionType=%s, XattrsBlobKey=%s, XattrsSize=%d, "+
 		"AclBlobKey=%s, Uid=%d, Gid=%d, Mode=%s, MtimeSec=%d, MtimeNsec=%d, "+
 		"Flags=%x, FinderFlags=%x, ExtendedFinderFlags=%x, StDev=%d, "+
 		"StIno=%d, StNlink=%d, StRdev=%d, CtimeSec=%d, CtimeNsec=%d, "+
 		"StBlocks=%d, StBlksize=%d, AggregateSizeOnDisk=%d, "+
 		"CreateTimeSec=%d, CreateTimeNsec=%d, MissingNodes=%s}",
-		c.Header, c.XattrsAreCompressed, c.AclIsCompressed, c.XattrsBlobKey,
+		c.Header, c.XattrsCompressionType, c.AclCompressionType, c.XattrsBlobKey,
 		c.XattrsSize, c.AclBlobKey, c.Uid, c.Gid, c.Mode, c.MtimeSec,
 		c.MtimeNsec, c.Flags, c.FinderFlags, c.ExtendedFinderFlags,
 		c.StDev, c.StIno, c.StNlink, c.StRdev, c.CtimeSec, c.CtimeNsec,
@@ -106,11 +105,11 @@ func ReadTree(p *bytes.Buffer) (tree *Tree, err error) {
 		return
 	}
 	if tree.Header.Version >= 12 {
-		if tree.XattrsAreCompressed, err = ReadBoolean(p); err != nil {
+		if tree.XattrsCompressionType, err = ReadCompressionType(p, tree.Header.Version >= 19); err != nil {
 			err = errors.New(fmt.Sprintf("ReadTree failed during XattrsAreCompressed parsing: %s", err))
 			return
 		}
-		if tree.AclIsCompressed, err = ReadBoolean(p); err != nil {
+		if tree.AclCompressionType, err = ReadCompressionType(p, tree.Header.Version >= 19); err != nil {
 			err = errors.New(fmt.Sprintf("ReadTree failed during AclIsCompressed parsing: %s", err))
 			return
 		}
@@ -124,6 +123,7 @@ func ReadTree(p *bytes.Buffer) (tree *Tree, err error) {
 		tree.XattrsBlobKey = nil
 	}
 	binary.Read(p, binary.BigEndian, &tree.XattrsSize)
+
 	log.Debugf("Reading AclBlobKey...")
 	if tree.AclBlobKey, err = ReadBlobKey(p, tree.Header, true); err != nil {
 		err = errors.New(fmt.Sprintf("ReadTree AclBlobKey couldn't be parsed: %s", err))
@@ -132,6 +132,7 @@ func ReadTree(p *bytes.Buffer) (tree *Tree, err error) {
 	if tree.AclBlobKey.SHA1 == nil {
 		tree.AclBlobKey = nil
 	}
+
 	binary.Read(p, binary.BigEndian, &tree.Uid)
 	binary.Read(p, binary.BigEndian, &tree.Gid)
 	binary.Read(p, binary.BigEndian, &tree.Mode)

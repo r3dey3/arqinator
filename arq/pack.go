@@ -28,12 +28,12 @@ import (
 	"io"
 	"os"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 )
 
 /**
 Verify that a pack file is valid. All pack files end with a 20-byte SHA1 of the full contents of the file.
- */
+*/
 func IsValidPackFile(cacheFilepath string) (bool, error) {
 	fileInfo, err := os.Stat(cacheFilepath)
 	if err != nil {
@@ -42,7 +42,7 @@ func IsValidPackFile(cacheFilepath string) (bool, error) {
 		return false, err
 	}
 	size := fileInfo.Size()
-	if (size <= 20) {
+	if size <= 20 {
 		// the file itself is <= 20 bytes big, so the file must be truncated
 		msg := fmt.Sprintf("IsValidPackFile: file is too small, must be truncated. size: %s", fileInfo.Size())
 		log.Debugln(msg)
@@ -55,7 +55,7 @@ func IsValidPackFile(cacheFilepath string) (bool, error) {
 	}
 	defer f.Close()
 	hasher := sha1.New()
-	if _, err := io.CopyN(hasher, f, size - 20); err != nil {
+	if _, err := io.CopyN(hasher, f, size-20); err != nil {
 		log.Debugln("IsValidPackFile: error whilst reading pack file: ", err)
 		return false, err
 	}

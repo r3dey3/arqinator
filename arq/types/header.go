@@ -23,6 +23,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	log "github.com/sirupsen/logrus"
 	"strconv"
 )
 
@@ -77,12 +78,14 @@ func ReadHeader(p *bytes.Buffer) (header *Header, err error) {
 		header.Type = BLOB_TYPE_X_ATTR_SET
 		version = bytes.TrimPrefix(header.Data, []byte("XAttrSetV"))
 	} else {
-		err = errors.New(fmt.Sprintf("ReadHeader header %s has unknown type", header.Data))
+		err = errors.New(fmt.Sprintf("ReadHeader header '%s' has unknown type", header.Data))
 		return
 	}
 	if header.Version, err = strconv.Atoi(string(version)); err != nil {
 		err = errors.New(fmt.Sprintf("ReadHeader header %s has non-integer version", header.Data))
 		return
 	}
+	log.Debugf("Read header %s", header)
+	//log.Debug(p)
 	return
 }
